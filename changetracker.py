@@ -1,16 +1,44 @@
 """
-Changetracker
-A filesystem monitor
+changetracker is a filesystem monitor. It monitors a given directory in your filesystem for changes
+like:
+ - item added
+ - item removed
+ - item renamed / moved
+ - file content changed
+through calling a custom handler-object's callback methods.
+
+The whole changetracker funtionality is implemented in the L{ChangeTracker <ChangeTracker>}-class.
+
+The source code of changetracker contains a short commented example on how to use it, at the end
+of the file.
 """
 
 import os, time, threading, pickle, hashlib, copy
 
 class ChangeTracker ():
 	"""
-	Monitors a directory for changes
+	Monitors a directory for changes.
+	
+	See the constructor on how to create a ChangeTracker-object. After its creation, you may run
+	ChangeTracker.start () to start the monitoring of the specified
+	directory. The monitoring terminates, when ChangeTracker.stop () is called.
+	
+	In threaded mode, ChangeTracker.start () launches an own thread and instantly returns. In
+	non-threaded mode it returns not before ChangeTracker.stop () is called from somewhere out of
+	the handler-callbacks.
 	"""
 	def __init__ (self, path = None, interval = 1.0, handler = None, threaded = True):
-		
+		"""
+		@param path: The path to the directory, which you want to monitor
+		@param interval: seconds between two monitoring updates
+		@type interval: float
+		@param handler: A handler-object, recieving different callbacks on change-events;
+			Defaults to L{DefaultChangeHandler <DefaultChangeHandler>}. See its description for
+			how the callback-methods in a handler-object should look like.
+		@param threaded: True if ChangeTracker should run in a seperate thread, otherwise
+			it runs asynchronously.
+		@type threaded: bool
+		"""
 		# path to be watched
 		self.path = os.getcwd () if path is None else path
 		# seconds between two updates
@@ -27,7 +55,9 @@ class ChangeTracker ():
 		self.thread = threading.Thread (target=self.run) if threaded else None
 	
 	def start (self):
-	
+		"""
+		Starts the monitoring, until stop () is called.
+		"""
 		if self.thread is None:
 			self.run ()
 		else:
@@ -35,9 +65,7 @@ class ChangeTracker ():
 	
 	def run (self):
 		"""
-		This runs the ChangeTracker after its creation and terminates,
-		when self.running becomes False
-		Do not call this method, instead call start()
+		Do not call this method, instead call start () .
 		"""
 		self.running = True
 		while self.running:
@@ -46,19 +74,31 @@ class ChangeTracker ():
 			time.sleep (self.interval)
 	
 	def suspend (self):
-	
+		"""
+		Pauses the monitoring process and puts it into the suspended state, until resume () is
+		called.
+		"""
 		self.suspended = True
 	
 	def resume (self):
-	
+		"""
+		Resumes the monitoring process, when it is in suspended mode, invoked by suspend ().
+		"""
 		self.suspended = False
 	
 	def stop (self):
-	
+		"""
+		Lets the monitoring process terminate.
+		"""
 		self.running = False
 	
 	def savestate (self, filename = None):
-	
+		"""
+		Saves the current internal TrackedItem-list to disk. This list can be reloaded through
+		loadstate ()
+		@param filename: The filename to store the list into. Defaults to the class-name.
+		@type filename: string
+		"""
 		pickleditems = { i.path : copy.copy (i) for i in self.allitems.values() }
 		for i in pickleditems.values():
 			i.ct = None
@@ -72,7 +112,11 @@ class ChangeTracker ():
 		fs.close()
 	
 	def loadstate (self, filename = None):
-	
+		"""
+		Trys to load a previously saved TrackedItem-list from disk.
+		@param filename: The filename to load the list from. Defaults to the class-name.
+		@type filename: string
+		"""
 		if filename is None:
 			filename = self.__class__.__name__
 		try:
@@ -86,7 +130,10 @@ class ChangeTracker ():
 			pass
 	
 	def update (self):
-	
+		"""
+		One single update-step usually called frequently by run () but it's okay, to call update ()
+		manually.
+		"""
 		removeditems = self.allitems.copy()
 		addeditems = {}
 		changeditems = {}
@@ -131,18 +178,19 @@ class ChangeTracker ():
 				self.handler.on_moved (i)
 
 class TrackedItem:
-	
+	"""
+	Represents one single item in the ChangeTracker. A callback method may read the attributes of
+	this object. It might not call any of it's methods or change any of it's attributes.
+	"""
 	def __init__ (self, path, ct):
 	
-		# full path of the item in the filesystem
 		# the pathname is the key attribute of the TrackedItem
-		self.path = path
+		self.path = path #: full path of the item in the filesystem
 		
 		# the parenting changetracker
 		self.ct = ct
 		
-		# old path before last movement
-		self.oldpath = None
+		self.oldpath = None #: the path of the item before it has moved to a new path
 						
 		self.update (init=True)
 	
@@ -180,7 +228,6 @@ class TrackedItem:
 		Updates the current state (itemtype, existence) and modtime of the item
 		return True if modtime has changed on a file, False otherwise
 		"""
-		
 		# itemtype = one of "link", "file", "dir", None
 		if os.path.islink (self.abspath()):
 			self.itemtype = "link"
@@ -189,13 +236,13 @@ class TrackedItem:
 		elif os.path.isdir (self.abspath()):
 			self.itemtype = "dir"
 		else:
-			self.itemtype = None
+			self.itemtype = None #: might be one of "link" , "file" , "dir"
 		
 		# md5 hash if it is a file
 		if dohash:
 			self.hashfile ()
 		else:
-			self.hash = None
+			self.hash = None #: md5 sum, if item is a file
 		
 		# last modification time if it is a file
 		if self.itemtype == "file":
@@ -206,7 +253,7 @@ class TrackedItem:
 				self.modtime = newmodtime
 				return True
 		else:
-			self.modtime = None
+			self.modtime = None #: last modification time, if item is a file
 		
 		return False
 	
@@ -237,21 +284,39 @@ class TrackedItem:
 				self.hash = newhash
 
 class DefaultChangeHandler:
-
+	"""
+	The default monitoring-handler, which simply prints messages, when change events occur.
+	"""
 	def on_changed (self, item):
-	
+		"""
+		called, when the contents of a file item has changed.
+		@param item: the item, which has changed
+		@type item: L{TrackedItem <TrackedItem>}
+		"""
 		print item,"was changed"
 
 	def on_removed (self, item):
-	
+		"""
+		called, when one item seems to be removed.
+		@param item: the item, which has been removed
+		@type item: L{TrackedItem <TrackedItem>}
+		"""
 		print item,"was removed"
 
 	def on_added (self, item):
-	
+		"""
+		called, when a new item seems to be added.
+		@param item: the item, which has been added
+		@type item: L{TrackedItem <TrackedItem>}
+		"""
 		print item,"was added"
 
 	def on_moved (self, item):
-	
+		"""
+		called, when a file item seems to be moved from one path to another.
+		@param item: the item, which has been moved
+		@type item: L{TrackedItem <TrackedItem>}
+		"""
 		print item,"was moved from",item.oldpath
 
 def recursive_list (rootpath):
@@ -269,14 +334,14 @@ def recursive_list (rootpath):
 if __name__ == "__main__":
 
 	try:
-		ct = ChangeTracker ()
-		ct.loadstate ()
-		ct.start ()
-		while True:
+		ct = ChangeTracker () # create a ChangeTracker-object in threaded mode
+		ct.loadstate () # try to load an item-list from previous sessions
+		ct.start () # launch to ChangeTracker
+		while True: # since we're in threaded mode, we have to idle ...
 			time.sleep(2)
-	except KeyboardInterrupt:
-		ct.stop()
-		ct.savestate()
+	except KeyboardInterrupt: # ... until the user interrupts with Ctrl-C
+		ct.stop() # terminate the monitoring
+		ct.savestate() # and save the item-list to disk
 
 	print "kthxbye"
 
